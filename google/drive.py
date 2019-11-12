@@ -557,6 +557,7 @@ class GoogleDrive:
     def _process_changes(self, data):
         unwanted_file_paths = []
         added_file_paths = {}
+        removed_file_paths = {}
         ignored_file_paths = {}
         renamed_file_paths = {}
         moved_file_paths = {}
@@ -570,13 +571,13 @@ class GoogleDrive:
         # process changes
         for change in data['changes']:
             if 'file' in change and 'fileId' in change:
-                # dont consider trashed/removed events for processing
-                if ('trashed' in change['file'] and change['file']['trashed']) or (
-                        'removed' in change and change['removed']):
-                    if self.remove_item_from_cache(change['fileId']) and self.show_cache_logs:
-                        logger.info("Removed '%s' from cache: %s", change['fileId'], change['file']['name'])
-                    removes += 1
-                    continue
+ #               # dont consider trashed/removed events for processing
+ #               if ('trashed' in change['file'] and change['file']['trashed']) or (
+ #                       'removed' in change and change['removed']):
+ #                   if self.remove_item_from_cache(change['fileId']) and self.show_cache_logs:
+ #                       logger.info("Removed '%s' from cache: %s", change['fileId'], change['file']['name'])
+ #                   removes += 1
+ #                   continue
 
                 # retrieve item from cache
                 existing_cache_item = self.get_item_from_cache(change['fileId'])
@@ -620,7 +621,23 @@ class GoogleDrive:
                                                                      'file'] else 'Unknown')
                     if isinstance(unwanted_paths, list) and len(unwanted_paths):
                         unwanted_file_paths.extend(unwanted_paths)
+                        continue
 
+                # dont consider trashed/removed events for processing
+                if ('trashed' in change['file'] and change['file']['trashed']) or (
+                        'removed' in change and change['removed']):
+
+                    if change['fileId'] in added_file_paths:
+                        removed_file_paths[change['fileId']].extend(item_paths)
+                    else:
+                        removed_file_paths[change['fileId']] = item_paths
+
+                    if self.remove_item_from_cache(change['fileId']) and self.show_cache_logs:
+                        logger.info("Removed '%s' from cache: %s", change['fileId'], change['file']['name'])
+
+                    #removes += 1
+                    continue
+                    
                 # was this an existing item?
                 if existing_cache_item is not None and (success and len(item_paths)):
                     # this was an existing item, and we are re-processing it again
@@ -709,16 +726,18 @@ class GoogleDrive:
         # display logging
         logger.debug("Added: %s", added_file_paths)
         logger.debug("Unwanted: %s", unwanted_file_paths)
+        logger.debug("Removed: %s", removed_file_paths)
         logger.debug("Ignored: %s", ignored_file_paths)
         logger.debug("Renamed: %s", renamed_file_paths)
         logger.debug("Moved: %s", moved_file_paths)
 
         logger.info('%d added / %d removed / %d unwanted / %d ignored / %d renamed / %d moved', len(added_file_paths),
-                    removes, len(unwanted_file_paths), len(ignored_file_paths), len(renamed_file_paths),
+                    len(removed_file_paths), len(unwanted_file_paths), len(ignored_file_paths), len(renamed_file_paths),
                     len(moved_file_paths))
 
         # call further callbacks
         self._do_callback('items_added', added_file_paths)
+        self._do_callback('items_removed', removed_file_paths)
         self._do_callback('items_unwanted', unwanted_file_paths)
         self._do_callback('items_ignored', ignored_file_paths)
 
