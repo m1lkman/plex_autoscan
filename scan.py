@@ -183,6 +183,33 @@ def process_google_changes(items_added):
     return True
 
 
+def process_google_removals(items_removed):
+    removed_file_paths = []
+
+    # process items added
+    if not items_removed:
+        return True
+
+    for file_id, file_paths in items_removed.items():
+        for file_path in file_paths:
+            if file_path in removed_file_paths:
+                continue
+            removed_file_paths.append(file_path)
+
+    # process the file_paths list
+    if len(removed_file_paths):
+        logger.info("Proceeding with removal of %d file(s) from Google Drive changes: %s", len(removed_file_paths),
+                    removed_file_paths)
+
+        # loop each file, remapping and starting a scan thread
+        for file_path in removed_file_paths:
+            final_path = utils.map_pushed_path(conf.configs, file_path)
+            #plex.delete_metadata_item_id(conf.configs, final_path)
+            start_scan(final_path, 'Google Drive', 'Removal')
+
+    return True
+
+
 def thread_google_monitor():
     global manager
 
@@ -217,6 +244,7 @@ def thread_google_monitor():
 
     # set callbacks
     manager.set_callbacks({'items_added': process_google_changes})
+    manager.set_callbacks({'items_removed': process_google_removals})
 
     try:
         logger.info("Google Drive changes monitor started.")
