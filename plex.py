@@ -49,6 +49,9 @@ def scan(config, lock, path, scan_for, section, scan_type, resleep_paths, scan_t
             if not scan_path or not len(scan_path):
                 scan_path = os.path.dirname(path).strip() if not scan_path_is_directory else path.strip()
             break
+        elif config['PLEX_DELETE_FROM_PLEX'] and scan_type == 'Removal':
+            scan_path = os.path.dirname(path).strip()
+            break
         elif not scan_path_is_directory and config['SERVER_SCAN_FOLDER_ON_FILE_EXISTS_EXHAUSTION'] and \
                 config['SERVER_MAX_FILE_CHECKS'] - checks == 1:
             # penultimate check but SERVER_SCAN_FOLDER_ON_FILE_EXISTS_EXHAUSTION was turned on
@@ -538,6 +541,63 @@ def get_file_metadata_ids(config, file_path):
     except Exception as ex:
         logger.exception("Exception finding metadata_item_id for '%s': ", file_path)
     return results
+
+
+def delete_metadata_item_id(config, file_path):
+    if not config['PLEX_DELETE_FROM_PLEX']:
+        logger.info("Skipping delete Metadata_item_id for file '%s' from Plex, PLEX_DELETE_FROM_PLEX in config is not 'true'.", file_path)
+        return
+
+    results = []
+    media_item_row = None
+
+    try:
+        with sqlite3.connect(config['PLEX_DATABASE_PATH']) as conn:
+            conn.row_factory = sqlite3.Row
+            with closing(conn.cursor()) as c:
+                # query media_parts to retrieve media_item_row for this file
+                for x in range(5):
+                    media_item_row = c.execute("SELECT * FROM media_parts WHERE file=?", (file_path,)).fetchone()
+                    if media_item_row:
+                        logger.info("Found row in media_parts where file = '%s' after %d/5 tries!", file_path, x + 1)
+                        break
+                    else:
+                        logger.error("Could not locate record in media_parts where file = '%s', %d/5 attempts...",
+                                     file_path, x + 1)
+                        time.sleep(10)
+
+                if not media_item_row:
+                    logger.error("Could not locate record in media_parts where file = '%s' after 5 tries...", file_path)
+                    return None
+
+                media_item_id = media_item_row['media_item_id']
+                if media_item_id and int(media_item_id):
+                    # query db to find metadata_item_id
+                    metadata_item_id = \
+                        c.execute("SELECT * FROM media_items WHERE id=?", (int(media_item_id),)).fetchone()[
+                            'metadata_item_id']
+                    if metadata_item_id and int(metadata_item_id):
+                        logger.debug("Found metadata_item_id for '%s': %d", file_path, int(metadata_item_id))
+
+    except Exception as ex:
+        logger.exception("Exception finding metadata_item_id for '%s': ", file_path)
+
+    for x in range(5):
+        try:
+            resp = requests.delete('%s/library/metadata/%s' % (config['PLEX_LOCAL_URL'], str(metadata_item_id)),
+                                headers={'X-Plex-Token': config['PLEX_TOKEN'], 'Accept': 'application/json'},
+                                timeout=30, verify=False)
+            if resp.status_code == 200:
+                logger.info("Deleted etadata_item_id '%s' for file '%s' from Plex after %d/5 tries!",metadata_item_id, file_path, x + 1)
+                break
+            else:
+                logger.error("Unexpected response status_code for delete metadata request: %d, %d/5 attempts...",
+                             resp.status_code, x + 1)
+                time.sleep(10)
+        except Exception as ex:
+            logger.exception("Exception deleting metadata_item_id '%s' for file '%s', %d/5 attempts: ", metadata_item_id, file_path, x + 1)
+            time.sleep(10)
+    return
 
 
 def empty_trash(config, section):
